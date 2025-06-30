@@ -5,6 +5,7 @@ from pydub.utils import which
 from PIL import Image
 from moviepy import VideoFileClip
 from fastapi.middleware.cors import CORSMiddleware
+import numpy as np
 
 import tempfile
 import io
@@ -28,7 +29,8 @@ app.add_middleware(
 @app.get("/")
 async def root():
     return {
-        "message": "Welcome to the Media Compressor API. Use the endpoints to compress images, videos, and audio files."
+        "message": "Welcome to the Media Compressor API. Use the endpoints to compress images, videos, and audio files.",
+        "author": "Fitran Alfian Nizar",
     }
 
 
@@ -100,3 +102,66 @@ async def compress_audio(
             "Content-Length": str(len(out_audio.getvalue())),
         },
     )
+
+
+@app.post("/steganography/image/hide")
+async def hide_text_in_image(file: UploadFile = File(...), message: str = Form(...)):
+    img_bytes = io.BytesIO(await file.read())
+    image = Image.open(img_bytes).convert("RGB")
+
+    data = np.array(image)
+    flat_data = data.flatten()
+
+    prefix = "STEGOK4|"
+    full_message = prefix + message
+    binary_message = "".join(f"{ord(c):08b}" for c in full_message)
+    binary_message += "00000000"  # Null terminator to signal end of message
+
+    if len(binary_message) > len(flat_data):
+        return {"error": "Message too long to hide in this image."}
+
+    for i in range(len(binary_message)):
+        flat_data[i] = (flat_data[i] & 0xFE) | int(binary_message[i])
+    stego_data = flat_data.reshape(data.shape)
+    stego_image = Image.fromarray(stego_data.astype("uint8"), "RGB")
+
+    out = io.BytesIO()
+    stego_image.save(out, format="PNG")  # PNG to prevent recompression
+    out.seek(0)
+
+    return StreamingResponse(
+        out,
+        media_type="image/png",
+        headers={
+            "Content-Disposition": "attachment; filename=stego_image.png",
+            "Content-Length": str(len(out.getvalue())),
+        },
+    )
+
+
+@app.post("/steganography/image/reveal")
+async def reveal_text_from_image(file: UploadFile = File(...)):
+    img_bytes = io.BytesIO(await file.read())
+    image = Image.open(img_bytes).convert("RGB")
+
+    data = np.array(image)
+    flat_data = data.flatten()
+
+    bits = []
+    for value in flat_data:
+        bits.append(str(value & 1))
+
+    # Convert bits to characters
+    message = ""
+    for i in range(0, len(bits), 8):
+        byte = "".join(bits[i : i + 8])
+        char = chr(int(byte, 2))
+        if char == "\x00":  # Null terminator
+            break
+        message += char
+
+    if not message.startswith("STEGOK4|"):
+        return {"hidden_message": "No hidden message detected."}
+
+    hidden_message = message[len("STEGOK4|") :]
+    return {"hidden_message": hidden_message}

@@ -1,6 +1,7 @@
 fastapi 
-uvicorn 
+uvicorn[standard] 
 pillow 
 moviepy 
 pydub 
 python-multipart
+numpy
